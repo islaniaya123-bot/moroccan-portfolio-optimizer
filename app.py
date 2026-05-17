@@ -85,15 +85,15 @@ with st.sidebar:
         help="CVaR captures tail risk better than variance"
     )
     
-    # Target return
+    # Target return - FIXED VERSION
     target_return = st.slider(
         "Target Annual Return",
-        min_value=0.05,
-        max_value=0.30,
-        value=0.12,
-        step=0.01,
-        format="%.0f%%"
-    )
+        min_value=5,
+        max_value=30,
+        value=12,
+        step=1,
+        format="%d%%"
+    ) / 100
     
     # Time horizon
     horizon = st.selectbox(
