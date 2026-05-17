@@ -150,29 +150,61 @@ st.markdown("""
         color: #FFFFFF;
         margin-top: 8px;
     }
+    
+    .info-box {
+        background: #1A1C23;
+        border-radius: 12px;
+        padding: 16px;
+        border-left: 3px solid #00A86B;
+        margin: 16px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==================== DATA LOADING ====================
 @st.cache_data(ttl=3600)
 def load_stock_data(ticker, period="2y"):
-    """Load stock data from Yahoo Finance"""
+    """Load stock data from Yahoo Finance - handles both stocks and indices"""
     try:
         df = yf.download(ticker, period=period, interval="1d", progress=False)
         if not df.empty and len(df) > 50:
-            return df['Adj Close']
+            # Try different column names
+            if 'Adj Close' in df.columns:
+                return df['Adj Close']
+            elif 'Close' in df.columns:
+                return df['Close']
+            else:
+                return df.iloc[:, 0]  # First column as fallback
     except Exception as e:
         st.warning(f"Could not load {ticker}: {str(e)}")
     return None
 
 @st.cache_data(ttl=3600)
 def get_moroccan_tickers():
-    """Return list of Moroccan and international tickers"""
+    """Return list of Moroccan tickers with correct Yahoo Finance symbols"""
     return {
-        "Moroccan Index": {"MASI": "^MASI", "MADEX": "^MADEX"},
-        "Moroccan Banks": {"ATW": "ATW.CS", "BCP": "BCP.CS", "BMCE": "BMCE.CS", "CDM": "CDM.CS"},
-        "Moroccan Other": {"IAM": "IAM.CS", "OCP": "OCP.CS", "AGM": "AGM.CS", "WAA": "WAA.CS"},
-        "International": {"S&P 500": "^GSPC", "EuroStoxx": "^STOXX50E", "Gold": "GC=F", "Oil": "CL=F"}
+        "Moroccan Indices": [
+            {"name": "MASI", "ticker": "^MASI"},
+            {"name": "MADEX", "ticker": "^MADEX"}
+        ],
+        "Moroccan Banks": [
+            {"name": "ATW (Attijariwafa)", "ticker": "ATW.CS"},
+            {"name": "BCP (Banque Populaire)", "ticker": "BCP.CS"},
+            {"name": "BMCE Bank", "ticker": "BMCE.CS"},
+            {"name": "CDM (Credit du Maroc)", "ticker": "CDM.CS"}
+        ],
+        "Moroccan Large Caps": [
+            {"name": "IAM (Maroc Telecom)", "ticker": "IAM.CS"},
+            {"name": "OCP (Phosphates)", "ticker": "OCP.CS"},
+            {"name": "AGM (Agma Lahlou)", "ticker": "AGM.CS"},
+            {"name": "WAA (Wafa Assurance)", "ticker": "WAA.CS"}
+        ],
+        "International Indices": [
+            {"name": "S&P 500", "ticker": "^GSPC"},
+            {"name": "Nasdaq", "ticker": "^IXIC"},
+            {"name": "Euro Stoxx 50", "ticker": "^STOXX50E"},
+            {"name": "FTSE 100", "ticker": "^FTSE"}
+        ]
     }
 
 # ==================== PORTFOLIO OPTIMIZATION ====================
@@ -267,16 +299,14 @@ def efficient_frontier_points(mean_returns, cov_matrix, n_points=30):
     target_returns = np.linspace(min_ret, max_ret, n_points)
     volatilities = []
     returns_list = []
-    weights_list = []
     
     for target in target_returns:
         weights, variance = optimize_target_return(mean_returns, cov_matrix, target)
         if variance != np.inf:
             volatilities.append(np.sqrt(variance))
             returns_list.append(target)
-            weights_list.append(weights)
     
-    return np.array(returns_list), np.array(volatilities), weights_list
+    return np.array(returns_list), np.array(volatilities)
 
 # ==================== GARCH VOLATILITY ====================
 def compute_garch_volatility(returns, lambda_ewma=0.94):
@@ -304,7 +334,7 @@ def estimate_copula_params(returns):
             theta_clayton = max(0.01, 2 * tau / (1 - tau)) if tau > 0 else 0.01
             theta_gumbel = max(1.01, 1 / (1 - tau)) if tau < 0.99 else 2.0
             
-            params[f"{asset_names[i]}_{asset_names[j]}"] = {
+            params[f"{asset_names[i]} - {asset_names[j]}"] = {
                 "Kendall Tau": round(tau, 4),
                 "Normal Rho": round(rho_normal, 4),
                 "Clayton Theta": round(theta_clayton, 4),
@@ -364,28 +394,46 @@ def main():
         
         moroccan_tickers = get_moroccan_tickers()
         
-        selected_tickers = {}
+        selected_assets = []
         
-        for category, tickers in moroccan_tickers.items():
+        for category, assets in moroccan_tickers.items():
             st.markdown(f"**{category}**")
             cols = st.columns(2)
-            for idx, (name, ticker) in enumerate(tickers.items()):
+            for idx, asset in enumerate(assets):
                 with cols[idx % 2]:
-                    if st.checkbox(name, value=False, key=f"cb_{name}"):
-                        selected_tickers[name] = ticker
+                    if st.checkbox(asset["name"], key=f"cb_{asset['name'].replace(' ', '_')}"):
+                        selected_assets.append({"name": asset["name"], "ticker": asset["ticker"]})
             st.markdown("---")
         
         # Custom ticker input
         st.markdown("#### Add Custom Stock")
-        custom_ticker = st.text_input("Enter Ticker Symbol", placeholder="e.g., AAPL, MSFT, TSLA")
-        custom_name = st.text_input("Display Name", placeholder="e.g., Apple")
+        col1, col2 = st.columns(2)
+        with col1:
+            custom_ticker = st.text_input("Ticker", placeholder="AAPL")
+        with col2:
+            custom_name = st.text_input("Name", placeholder="Apple Inc.")
+        
         if custom_ticker and custom_name:
-            if st.button("Add Custom Stock"):
-                selected_tickers[custom_name] = custom_ticker
+            if st.button("Add to Portfolio"):
+                selected_assets.append({"name": custom_name, "ticker": custom_ticker.upper()})
                 st.rerun()
         
-        if selected_tickers:
-            st.success(f"{len(selected_tickers)} assets selected")
+        # Remove assets
+        if len(selected_assets) > 0:
+            st.markdown("#### Remove Assets")
+            remove_idx = st.multiselect(
+                "Select to remove",
+                options=range(len(selected_assets)),
+                format_func=lambda i: selected_assets[i]["name"]
+            )
+            if remove_idx and st.button("Remove Selected"):
+                selected_assets = [a for i, a in enumerate(selected_assets) if i not in remove_idx]
+                st.rerun()
+        
+        if selected_assets:
+            st.success(f"{len(selected_assets)} assets selected")
+        else:
+            st.warning("Select at least 2 assets")
         
         st.markdown("---")
         
@@ -425,8 +473,7 @@ def main():
         copula_type = st.selectbox(
             "Copula Type",
             ["Normal", "Student-t", "Clayton", "Gumbel"],
-            index=0,
-            help="Different copulas capture different tail dependence patterns"
+            index=0
         )
         
         rebalancing_freq = st.selectbox(
@@ -446,26 +493,24 @@ def main():
         run_optimization = st.button("Run Optimization", use_container_width=True)
     
     # ==================== MAIN CONTENT ====================
-    if not selected_tickers:
-        st.info("👈 Please select assets from the sidebar to begin portfolio optimization.")
+    if len(selected_assets) < 2:
+        st.info("👈 Please select at least 2 assets from the sidebar to begin portfolio optimization.")
         
         # Show available tickers
-        st.markdown("### Available Moroccan Assets")
-        col1, col2, col3 = st.columns(3)
+        st.markdown("### Available Assets")
         
+        col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Indices**")
+            st.markdown("**Moroccan Indices**")
             st.code("MASI\nMADEX")
-            st.markdown("**Banks**")
-            st.code("ATW (Attijariwafa Bank)\nBCP (Banque Populaire)\nBMCE\nCDM")
+            st.markdown("**Moroccan Banks**")
+            st.code("ATW (Attijariwafa Bank)\nBCP (Banque Populaire)\nBMCE Bank\nCDM (Credit du Maroc)")
         
         with col2:
-            st.markdown("**Large Caps**")
-            st.code("IAM (Maroc Telecom)\nOCP (Phosphates)\nAGM (Agma)\nWAA (Wafa Assurance)")
-        
-        with col3:
-            st.markdown("**International**")
-            st.code("^GSPC (S&P 500)\n^STOXX50E (EuroStoxx)\nGC=F (Gold)\nCL=F (Oil)")
+            st.markdown("**Moroccan Large Caps**")
+            st.code("IAM (Maroc Telecom)\nOCP (Phosphates)\nAGM (Agma Lahlou)\nWAA (Wafa Assurance)")
+            st.markdown("**International Indices**")
+            st.code("S&P 500\nNasdaq\nEuro Stoxx 50\nFTSE 100")
         
         return
     
@@ -474,7 +519,7 @@ def main():
         
         # Show selected assets
         st.markdown("### Selected Assets")
-        selected_df = pd.DataFrame(list(selected_tickers.items()), columns=["Asset", "Ticker"])
+        selected_df = pd.DataFrame(selected_assets)
         st.dataframe(selected_df, use_container_width=True, hide_index=True)
         
         return
@@ -482,10 +527,17 @@ def main():
     # ==================== LOAD AND PROCESS DATA ====================
     with st.spinner("Loading market data..."):
         prices_data = {}
-        for name, ticker in selected_tickers.items():
-            data = load_stock_data(ticker, period="2y")
+        failed_assets = []
+        
+        for asset in selected_assets:
+            data = load_stock_data(asset["ticker"], period="2y")
             if data is not None:
-                prices_data[name] = data
+                prices_data[asset["name"]] = data
+            else:
+                failed_assets.append(asset["name"])
+        
+        if failed_assets:
+            st.warning(f"Could not load data for: {', '.join(failed_assets)}")
         
         if len(prices_data) < 2:
             st.error("Need at least 2 assets with valid data. Please select different assets.")
@@ -515,7 +567,11 @@ def main():
         optimal_weights = optimize_min_variance(annualized_returns, annualized_cov)
         objective_name = "Minimum Variance"
     else:
-        optimal_weights, _ = optimize_target_return(annualized_returns, annualized_cov, target_return_pct)
+        result = optimize_target_return(annualized_returns, annualized_cov, target_return_pct)
+        if isinstance(result, tuple):
+            optimal_weights, _ = result
+        else:
+            optimal_weights = result
         objective_name = f"Target Return ({target_return_pct*100:.1f}%)"
     
     # Portfolio metrics
@@ -553,7 +609,7 @@ def main():
         st.markdown(f"""
         <div class="metric-highlight">
             <div class="metric-label">Objective</div>
-            <div class="metric-value" style="font-size: 16px;">{objective_name}</div>
+            <div class="metric-value" style="font-size: 14px;">{objective_name}</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -561,7 +617,7 @@ def main():
     st.markdown("### Portfolio Allocation")
     
     weights_df = pd.DataFrame({
-        "Asset": list(selected_tickers.keys()),
+        "Asset": list(prices_data.keys()),
         "Weight (%)": optimal_weights * 100,
         "Annual Return (%)": annualized_returns.values * 100,
         "Annual Volatility (%)": np.sqrt(np.diag(annualized_cov)) * 100
@@ -573,28 +629,31 @@ def main():
         st.dataframe(weights_df, use_container_width=True, hide_index=True)
     
     with col2:
-        # Pie chart
+        # Bar chart for weights
         non_zero_weights = weights_df[weights_df["Weight (%)"] > 0.1]
-        fig_pie = go.Figure(data=[go.Pie(
-            labels=non_zero_weights["Asset"],
-            values=non_zero_weights["Weight (%)"],
-            hole=0.4,
-            marker=dict(colors=px.colors.qualitative.Set3)
-        )])
-        fig_pie.update_layout(
-            template='plotly_dark',
-            plot_bgcolor='#14161C',
-            paper_bgcolor='#14161C',
-            title="Optimal Portfolio Composition",
-            title_font_color="#9CA3AF",
-            height=400
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        if len(non_zero_weights) > 0:
+            fig_bar = go.Figure(data=[go.Bar(
+                x=non_zero_weights["Asset"],
+                y=non_zero_weights["Weight (%)"],
+                marker_color='#00A86B',
+                text=non_zero_weights["Weight (%)"].round(1),
+                textposition='outside'
+            )])
+            fig_bar.update_layout(
+                template='plotly_dark',
+                plot_bgcolor='#14161C',
+                paper_bgcolor='#14161C',
+                title="Portfolio Weights",
+                title_font_color="#9CA3AF",
+                yaxis_title="Weight (%)",
+                height=400
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
     
     # ==================== EFFICIENT FRONTIER ====================
     st.markdown("### Efficient Frontier")
     
-    frontier_returns, frontier_vols, frontier_weights = efficient_frontier_points(annualized_returns, annualized_cov, n_points=40)
+    frontier_returns, frontier_vols = efficient_frontier_points(annualized_returns, annualized_cov, n_points=40)
     
     fig = go.Figure()
     
@@ -679,36 +738,38 @@ def main():
     st.markdown("### Copula Dependence Parameters")
     
     copula_params = estimate_copula_params(returns)
-    copula_df = pd.DataFrame(copula_params).T
-    st.dataframe(copula_df, use_container_width=True)
+    if copula_params:
+        copula_df = pd.DataFrame(copula_params).T
+        st.dataframe(copula_df, use_container_width=True)
     
     st.caption(f"""
-    Copula type selected: {copula_type}
-    - Normal: No tail dependence, symmetric
-    - Student-t: Upper and lower tail dependence
-    - Clayton: Lower tail dependence only (captures bear market co-movement)
-    - Gumbel: Upper tail dependence only (captures bull market co-movement)
+    **Copula Interpretation** - Selected: {copula_type}
+    - **Normal**: No tail dependence, symmetric structure
+    - **Student-t**: Upper and lower tail dependence, captures extreme events
+    - **Clayton**: Lower tail dependence only, captures bear market co-movement
+    - **Gumbel**: Upper tail dependence only, captures bull market co-movement
     """)
     
     # ==================== CORRELATION MATRIX ====================
     st.markdown("### Correlation Matrix")
     
+    corr_matrix = returns.corr()
+    
     fig_corr = go.Figure(data=go.Heatmap(
-        z=returns.corr().values,
-        x=returns.columns.tolist(),
-        y=returns.columns.tolist(),
+        z=corr_matrix.values,
+        x=corr_matrix.columns.tolist(),
+        y=corr_matrix.columns.tolist(),
         colorscale='RdYlGn',
         zmid=0,
-        text=returns.corr().round(3).values,
+        text=corr_matrix.round(3).values,
         texttemplate='%{text}',
-        textfont={"size": 10}
+        textfont={"size": 10, "color": "#FFFFFF"}
     ))
     
     fig_corr.update_layout(
         template='plotly_dark',
         plot_bgcolor='#14161C',
         paper_bgcolor='#14161C',
-        title="Asset Return Correlations",
         height=500
     )
     
@@ -759,6 +820,7 @@ min w^T Sigma w subject to w^T mu = c, sum w_i = 1
 
 Sharpe Ratio Maximization:
 max (w^T mu - r_f) / sqrt(w^T Sigma w)
+
 **Model Assumptions**
 
 1. No transaction costs or market frictions
@@ -767,17 +829,16 @@ max (w^T mu - r_f) / sqrt(w^T Sigma w)
 4. Historical returns are representative of future distributions
 """)
 
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; padding: 24px 0 16px 0;">
-        <div style="font-size: 12px; color: #4B5563;">
-            Methodology: GARCH(1,1) + Copula Dependence | Prince (2007) HEC Montreal<br>
-            Data Sources: MASI, MADEX, ATW, IAM, OCP | Risk-Free Rate: Bons du Tresor<br>
-            For educational and research purposes only. Not investment advice.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; padding: 16px 0;">
+<div style="font-size: 11px; color: #4B5563;">
+    Methodology: GARCH(1,1) + Copula Dependence | Prince (2007) HEC Montreal<br>
+    Data: Yahoo Finance | For educational and research purposes only
+</div>
+</div>
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main()
+main()
