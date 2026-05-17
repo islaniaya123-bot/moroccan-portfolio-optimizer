@@ -207,7 +207,7 @@ def load_moroccan_data():
         
         return prices, returns
 
-# ==================== GARCH SIMULATION (SIMPLIFIED) ====================
+# ==================== GARCH SIMULATION ====================
 def simulate_garch_volatility(returns, horizon=252):
     """Simulate GARCH-like volatility using EWMA approach"""
     lambda_ewma = 0.94
@@ -661,10 +661,11 @@ def main():
         """, unsafe_allow_html=True)
     
     with col3:
+        risk_return_ratio = target_return / target_vol if target_vol > 0 else 0
         st.markdown(f"""
         <div class="stat-item">
             <div class="stat-label">Risk-Return Ratio</div>
-            <div class="stat-number">{(target_return/target_vol):.2f}" class="stat-number">{(target_return/target_vol):.2f}</div>
+            <div class="stat-number">{risk_return_ratio:.2f}</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -760,7 +761,6 @@ def main():
         <div class="card">
             <div class="card-title">Value at Risk (95%)</div>
             <div class="card-value" style="color: #EF4444;">{var_95*100:.2f}%</div>
-            <div class="card-subtitle">Maximum loss at 95% confidence</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -769,16 +769,15 @@ def main():
         <div class="card">
             <div class="card-title">Conditional VaR (95%)</div>
             <div class="card-value" style="color: #EF4444;">{cvar_95*100:.2f}%</div>
-            <div class="card-subtitle">Expected loss beyond VaR</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
+        win_prob = np.mean(simulated_returns > 0) * 100
         st.markdown(f"""
         <div class="card">
             <div class="card-title">Win Probability</div>
-            <div class="card-value">{np.mean(simulated_returns > 0)*100:.1f}%</div>
-            <div class="card-subtitle">Probability of positive return</div>
+            <div class="card-value">{win_prob:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -828,19 +827,19 @@ def main():
     st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
     
     insights = [
-        ("Rebalancing Frequency", "Monthly rebalancing is optimal for the Moroccan market given liquidity constraints and transaction costs. Weekly rebalancing offers marginal improvement at significantly higher cost."),
-        ("Rolling Windows", "A 36-month estimation window captures regime changes while maintaining sufficient degrees of freedom for reliable GARCH parameter estimation."),
-        ("Clayton for BVC", "Lower-tail dependence during market stress is best captured by the Clayton copula, particularly evident during the 2020 and 2022 drawdown periods."),
-        ("OCP Volatility", "OCP exhibits the strongest GARCH effects with persistence near 0.97, requiring careful volatility modeling for accurate risk assessment."),
-        ("Banking Sector", "ATW and IAM show moderate but persistent volatility clustering with asymmetric responses to positive and negative market shocks."),
-        ("BVC Isolation", "The partial decoupling of the Casablanca Stock Exchange from emerging markets during stress periods supports the case for Moroccan diversification benefits.")
+        ("Rebalancing Frequency", "Monthly rebalancing is optimal for the Moroccan market given liquidity constraints and transaction costs."),
+        ("Rolling Windows", "A 36-month estimation window captures regime changes while maintaining sufficient degrees of freedom."),
+        ("Clayton for BVC", "Lower-tail dependence during market stress is best captured by the Clayton copula."),
+        ("OCP Volatility", "OCP exhibits the strongest GARCH effects with persistence near 0.97."),
+        ("Banking Sector", "ATW and IAM show persistent volatility clustering with asymmetric responses."),
+        ("BVC Isolation", "Partial decoupling from emerging markets supports Moroccan diversification benefits.")
     ]
     
     cols = st.columns(3)
     for idx, (title, content) in enumerate(insights):
         with cols[idx % 3]:
             st.markdown(f"""
-            <div class="card" style="min-height: 200px;">
+            <div class="card" style="min-height: 160px;">
                 <div class="card-title">{title.upper()}</div>
                 <div style="font-size: 13px; color: #D1D5DB; line-height: 1.5;">{content}</div>
             </div>
@@ -866,10 +865,6 @@ def main():
                 <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">ESG Integration</span>
                 <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Add ESG score constraints for socially responsible investment portfolios</span>
             </div>
-            <div style="margin-bottom: 16px;">
-                <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">Currency Risk</span>
-                <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Include USD/MAD hedging for portfolios with international exposure</span>
-            </div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -880,7 +875,15 @@ def main():
         Prince, A. (2007). *Probleme d'optimisation de portefeuille en temps discret avec une modelisation Garch*. HEC Montreal.
         
         **Key Mathematical Formulations**
-        
+        GARCH(1,1) Conditional Variance:
+h_t = beta_0 + beta_1 * epsilon^2_{t-1} + beta_2 * h_{t-1}
+
+Copula Function:
+C(u_1,...,u_d) = F(F_1^{-1}(u_1),...,F_d^{-1}(u_d))
+
+Efficient Frontier:
+min w^T Sigma w subject to w^T mu = c, sum w_i = 1
+
 **Software Stack**
 
 | Component | Library | Purpose |
