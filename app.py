@@ -902,16 +902,17 @@ min w^T Sigma w subject to w^T mu = c, sum w_i = 1
 4. Investor cannot influence market prices through trading activity
 """)
 
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; padding: 24px 0 16px 0;">
-<div style="font-size: 12px; color: #4B5563;">
-    Methodology: GARCH(1,1) + Copula Dependence | Prince (2007) HEC Montreal<br>
-    Data Sources: MASI, MADEX, ATW, IAM, OCP | Risk-Free Rate: Bons du Tresor<br>
-    For educational and research purposes only. Not investment advice.
-</div>
-</div>
-""", unsafe_allow_html=True)
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 24px 0 16px 0;">
+        <div style="font-size: 12px; color: #4B5563;">
+            Methodology: GARCH(1,1) + Copula Dependence | Prince (2007) HEC Montreal<br>
+            Data Sources: MASI, MADEX, ATW, IAM, OCP | Risk-Free Rate: Bons du Tresor<br>
+            For educational and research purposes only. Not investment advice.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
-main()
+    main()
