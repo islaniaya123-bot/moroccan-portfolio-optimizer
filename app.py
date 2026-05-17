@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
+import plotly.express as px
 from scipy.optimize import minimize
 from scipy.stats import norm, kendalltau, chi2, linregress
 import warnings
@@ -61,7 +62,7 @@ st.markdown("""
     }
     
     .card-title {
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 1px;
@@ -70,7 +71,7 @@ st.markdown("""
     }
     
     .card-value {
-        font-size: 32px;
+        font-size: 28px;
         font-weight: 700;
         color: #FFFFFF;
         line-height: 1.2;
@@ -149,142 +150,30 @@ st.markdown("""
         color: #FFFFFF;
         margin-top: 8px;
     }
-    
-    .badge-success {
-        background: rgba(0,168,107,0.15);
-        color: #00A86B;
-        border: 1px solid rgba(0,168,107,0.3);
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 500;
-        display: inline-block;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==================== DATA LOADING ====================
 @st.cache_data(ttl=3600)
-def load_moroccan_data():
-    """Load Moroccan market data from Yahoo Finance"""
-    
-    tickers = {
-        "MASI": "^MASI",
-        "MADEX": "^MADEX", 
-        "ATW": "ATW.CS",
-        "IAM": "IAM.CS",
-        "OCP": "OCP.CS"
+def load_stock_data(ticker, period="2y"):
+    """Load stock data from Yahoo Finance"""
+    try:
+        df = yf.download(ticker, period=period, interval="1d", progress=False)
+        if not df.empty and len(df) > 50:
+            return df['Adj Close']
+    except Exception as e:
+        st.warning(f"Could not load {ticker}: {str(e)}")
+    return None
+
+@st.cache_data(ttl=3600)
+def get_moroccan_tickers():
+    """Return list of Moroccan and international tickers"""
+    return {
+        "Moroccan Index": {"MASI": "^MASI", "MADEX": "^MADEX"},
+        "Moroccan Banks": {"ATW": "ATW.CS", "BCP": "BCP.CS", "BMCE": "BMCE.CS", "CDM": "CDM.CS"},
+        "Moroccan Other": {"IAM": "IAM.CS", "OCP": "OCP.CS", "AGM": "AGM.CS", "WAA": "WAA.CS"},
+        "International": {"S&P 500": "^GSPC", "EuroStoxx": "^STOXX50E", "Gold": "GC=F", "Oil": "CL=F"}
     }
-    
-    data = {}
-    for name, ticker in tickers.items():
-        try:
-            df = yf.download(ticker, period="2y", interval="1d", progress=False)
-            if not df.empty and len(df) > 50:
-                data[name] = df['Adj Close']
-        except Exception as e:
-            st.warning(f"Could not load {name}: {str(e)}")
-    
-    if len(data) >= 3:
-        prices = pd.DataFrame(data)
-        prices = prices.dropna(axis=1, how='all')
-        prices = prices.dropna()
-        returns = prices.pct_change().dropna()
-        return prices, returns
-    else:
-        # Generate realistic synthetic data
-        dates = pd.date_range(start='2022-01-01', periods=504, freq='D')
-        np.random.seed(42)
-        
-        returns_dict = {}
-        for i, name in enumerate(["MASI", "MADEX", "ATW", "IAM", "OCP"]):
-            vol = 0.012 + 0.005 * np.random.rand()
-            returns_dict[name] = 0.0005 + vol * np.random.randn(len(dates))
-        
-        returns = pd.DataFrame(returns_dict, index=dates)
-        prices = (1 + returns).cumprod() * 10000
-        prices.iloc[0] = [10000, 5000, 200, 150, 300]
-        
-        return prices, returns
-
-# ==================== GARCH SIMULATION ====================
-def simulate_garch_volatility(returns, horizon=252):
-    """Simulate GARCH-like volatility using EWMA approach"""
-    lambda_ewma = 0.94
-    
-    squared_returns = returns ** 2
-    ewma_var = squared_returns.ewm(alpha=1-lambda_ewma, adjust=False).mean()
-    ewma_vol = np.sqrt(ewma_var)
-    
-    return ewma_vol
-
-# ==================== DESCRIPTIVE STATISTICS ====================
-def compute_descriptive_stats(returns):
-    """Compute mean, variance, skewness, kurtosis, and ARCH test"""
-    stats = {}
-    for col in returns.columns:
-        series = returns[col].dropna()
-        n = len(series)
-        
-        mean_val = series.mean()
-        variance_val = series.var()
-        skew_val = series.skew()
-        kurt_val = series.kurtosis()
-        
-        # Simplified ARCH-LM test (Lag 1)
-        squared = series ** 2
-        lagged = squared.shift(1).dropna()
-        current = squared.iloc[1:]
-        
-        if len(current) > 10:
-            result = linregress(lagged, current)
-            arch_stat = n * result.rvalue**2
-            arch_pvalue = 1 - chi2.cdf(arch_stat, 1)
-        else:
-            arch_stat, arch_pvalue = np.nan, np.nan
-        
-        stats[col] = {
-            "Mean (%)": mean_val * 100,
-            "Volatility (%)": np.sqrt(variance_val) * 100,
-            "Skewness": skew_val,
-            "Kurtosis": kurt_val,
-            "ARCH LM": arch_stat,
-            "ARCH p-value": arch_pvalue
-        }
-    return pd.DataFrame(stats).T
-
-# ==================== COPULA ESTIMATION ====================
-def estimate_copula_params(returns):
-    """Estimate copula parameters from returns"""
-    n_assets = returns.shape[1]
-    asset_names = returns.columns.tolist()
-    params = {}
-    
-    # Convert to uniform margins using empirical CDF
-    u = pd.DataFrame(index=returns.index)
-    for col in returns.columns:
-        u[col] = returns[col].rank() / (len(returns) + 1)
-    
-    correlation_matrix = returns.corr().values
-    
-    for i in range(n_assets):
-        for j in range(i+1, n_assets):
-            tau, p_value = kendalltau(u.iloc[:, i], u.iloc[:, j])
-            
-            rho_normal = np.sin(np.pi * tau / 2) if abs(tau) < 0.99 else np.sign(tau) * 0.99
-            theta_clayton = max(0.01, 2 * tau / (1 - tau)) if tau > 0 else 0.01
-            theta_gumbel = max(1.01, 1 / (1 - tau)) if tau < 0.99 else 2.0
-            
-            params[f"{asset_names[i]}_{asset_names[j]}"] = {
-                "Kendall Tau": tau,
-                "Normal Rho": rho_normal,
-                "Clayton Theta": theta_clayton,
-                "Gumbel Theta": theta_gumbel,
-                "Student-t Rho": rho_normal,
-                "Student-t Nu": 4.0
-            }
-    
-    return params, u, correlation_matrix
 
 # ==================== PORTFOLIO OPTIMIZATION ====================
 def portfolio_statistics(weights, mean_returns, cov_matrix):
@@ -300,7 +189,7 @@ def negative_sharpe(weights, mean_returns, cov_matrix, risk_free_rate):
     sharpe = (port_return - risk_free_rate) / port_vol if port_vol > 0 else -np.inf
     return -sharpe
 
-def optimize_portfolio(mean_returns, cov_matrix, risk_free_rate=0.03):
+def optimize_max_sharpe(mean_returns, cov_matrix, risk_free_rate=0.03):
     """Find optimal weights maximizing Sharpe ratio"""
     n_assets = len(mean_returns)
     constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
@@ -323,7 +212,29 @@ def optimize_portfolio(mean_returns, cov_matrix, risk_free_rate=0.03):
     else:
         return initial_weights
 
-def portfolio_for_target_return(mean_returns, cov_matrix, target_return):
+def optimize_min_variance(mean_returns, cov_matrix):
+    """Find minimum variance portfolio"""
+    n_assets = len(mean_returns)
+    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+    bounds = tuple((0, 1) for _ in range(n_assets))
+    
+    initial_weights = n_assets * [1. / n_assets]
+    
+    result = minimize(
+        lambda w: np.dot(w.T, np.dot(cov_matrix, w)),
+        initial_weights,
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints,
+        options={'maxiter': 1000, 'ftol': 1e-9}
+    )
+    
+    if result.success:
+        return result.x
+    else:
+        return initial_weights
+
+def optimize_target_return(mean_returns, cov_matrix, target_return):
     """Find minimum variance portfolio for a given target return"""
     n_assets = len(mean_returns)
     constraints = (
@@ -351,187 +262,402 @@ def portfolio_for_target_return(mean_returns, cov_matrix, target_return):
 def efficient_frontier_points(mean_returns, cov_matrix, n_points=30):
     """Generate efficient frontier points"""
     min_ret = mean_returns.min()
-    max_ret = mean_returns.max() * 1.15
+    max_ret = mean_returns.max() * 1.2
     
     target_returns = np.linspace(min_ret, max_ret, n_points)
     volatilities = []
     returns_list = []
+    weights_list = []
     
     for target in target_returns:
-        weights, variance = portfolio_for_target_return(mean_returns, cov_matrix, target)
+        weights, variance = optimize_target_return(mean_returns, cov_matrix, target)
         if variance != np.inf:
             volatilities.append(np.sqrt(variance))
             returns_list.append(target)
+            weights_list.append(weights)
     
-    return np.array(returns_list), np.array(volatilities)
+    return np.array(returns_list), np.array(volatilities), weights_list
 
-# ==================== MONTE CARLO SIMULATION ====================
-def simulate_portfolio_paths(returns, weights, n_simulations=1000, horizon=252):
-    """Simulate future portfolio returns using bootstrap method"""
-    np.random.seed(42)
-    
-    historical_returns = returns.values
-    n_historical = len(historical_returns)
-    
-    portfolio_historical = np.dot(historical_returns, weights)
-    
-    simulated_final_values = np.zeros(n_simulations)
-    simulated_cumulative_returns = np.zeros(n_simulations)
-    
-    for sim in range(n_simulations):
-        bootstrap_indices = np.random.choice(n_historical, horizon, replace=True)
-        sampled_returns = portfolio_historical[bootstrap_indices]
-        
-        cumulative_return = np.sum(sampled_returns)
-        final_value = np.exp(cumulative_return)
-        
-        simulated_cumulative_returns[sim] = cumulative_return
-        simulated_final_values[sim] = final_value
-    
-    return simulated_final_values, simulated_cumulative_returns
+# ==================== GARCH VOLATILITY ====================
+def compute_garch_volatility(returns, lambda_ewma=0.94):
+    """Compute EWMA volatility (GARCH approximation)"""
+    squared_returns = returns ** 2
+    ewma_var = squared_returns.ewm(alpha=1-lambda_ewma, adjust=False).mean()
+    ewma_vol = np.sqrt(ewma_var)
+    return ewma_vol
 
-def calculate_var_cvar(returns_array, confidence=0.95):
-    """Calculate Value at Risk and Conditional Value at Risk"""
-    sorted_returns = np.sort(returns_array)
-    var_index = int((1 - confidence) * len(sorted_returns))
-    var = sorted_returns[var_index]
-    cvar = sorted_returns[:var_index].mean() if var_index > 0 else var
-    return var, cvar
+# ==================== COPULA ESTIMATION ====================
+def estimate_copula_params(returns):
+    """Estimate copula parameters from returns"""
+    n_assets = returns.shape[1]
+    asset_names = returns.columns.tolist()
+    params = {}
+    
+    u = pd.DataFrame(index=returns.index)
+    for col in returns.columns:
+        u[col] = returns[col].rank() / (len(returns) + 1)
+    
+    for i in range(n_assets):
+        for j in range(i+1, n_assets):
+            tau, _ = kendalltau(u.iloc[:, i], u.iloc[:, j])
+            rho_normal = np.sin(np.pi * tau / 2) if abs(tau) < 0.99 else np.sign(tau) * 0.99
+            theta_clayton = max(0.01, 2 * tau / (1 - tau)) if tau > 0 else 0.01
+            theta_gumbel = max(1.01, 1 / (1 - tau)) if tau < 0.99 else 2.0
+            
+            params[f"{asset_names[i]}_{asset_names[j]}"] = {
+                "Kendall Tau": round(tau, 4),
+                "Normal Rho": round(rho_normal, 4),
+                "Clayton Theta": round(theta_clayton, 4),
+                "Gumbel Theta": round(theta_gumbel, 4)
+            }
+    
+    return params
+
+# ==================== DESCRIPTIVE STATISTICS ====================
+def compute_statistics(returns):
+    """Compute descriptive statistics for each asset"""
+    stats = {}
+    for col in returns.columns:
+        series = returns[col].dropna()
+        n = len(series)
+        
+        mean_val = series.mean()
+        std_val = series.std()
+        skew_val = series.skew()
+        kurt_val = series.kurtosis()
+        
+        squared = series ** 2
+        lagged = squared.shift(1).dropna()
+        current = squared.iloc[1:]
+        
+        if len(current) > 10:
+            result = linregress(lagged, current)
+            arch_stat = n * result.rvalue**2
+            arch_pvalue = 1 - chi2.cdf(arch_stat, 1)
+        else:
+            arch_stat, arch_pvalue = np.nan, np.nan
+        
+        stats[col] = {
+            "Mean (%)": round(mean_val * 100, 3),
+            "Volatility (%)": round(std_val * 100, 3),
+            "Skewness": round(skew_val, 3),
+            "Kurtosis": round(kurt_val, 3),
+            "ARCH LM": round(arch_stat, 3),
+            "ARCH p-value": round(arch_pvalue, 4)
+        }
+    return pd.DataFrame(stats).T
 
 # ==================== MAIN APPLICATION ====================
 def main():
-    # Header Section
-    col1, col2 = st.columns([2.5, 1])
+    # Header
+    st.markdown('<h1 style="font-size: 44px; font-weight: 700; margin-bottom: 8px;">Moroccan Portfolio Optimizer</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #9CA3AF; margin-bottom: 32px;">Multi-period mean-variance optimization using GARCH(1,1) volatility and copula-based dependence. Based on Prince (2007) HEC Montreal.</p>', unsafe_allow_html=True)
     
-    with col1:
-        st.markdown('<h1 style="font-size: 48px; font-weight: 700; margin-bottom: 8px;">Moroccan Portfolio Optimizer</h1>', unsafe_allow_html=True)
-        st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-        st.markdown('<p style="color: #9CA3AF; margin-bottom: 32px;">Multi-period mean-variance optimization using GARCH(1,1) volatility modeling and copula-based dependence structures. Based on Prince (2007) HEC Montreal.</p>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div style="background: #14161C; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #2A2D35;">
-            <div style="font-size: 11px; color: #6B7280; letter-spacing: 1px;">METHODOLOGY</div>
-            <div style="font-size: 14px; font-weight: 500; margin-top: 8px;">GARCH(1,1) + Copula</div>
-            <div style="font-size: 12px; color: #00A86B; margin-top: 4px;">Mean-Variance Efficient</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Load data
-    with st.spinner("Loading Moroccan market data..."):
-        prices, returns = load_moroccan_data()
-    
-    # Sidebar
+    # ==================== SIDEBAR - STOCK SELECTION ====================
     with st.sidebar:
-        st.markdown("### Optimization Parameters")
-        st.markdown('<div class="accent-horizontal" style="margin-bottom: 24px;"></div>', unsafe_allow_html=True)
+        st.markdown("### Portfolio Construction")
+        st.markdown('<div class="accent-horizontal" style="margin-bottom: 16px;"></div>', unsafe_allow_html=True)
         
-        target_return = st.slider(
-            "Target Annual Return",
-            min_value=5.0,
-            max_value=25.0,
-            value=12.0,
-            step=0.5,
-            format="%.1f%%"
-        ) / 100
+        # Stock selection
+        st.markdown("#### Select Assets")
         
-        risk_free_rate = st.slider(
-            "Risk-Free Rate (Bons du Trésor)",
-            min_value=1.0,
-            max_value=6.0,
-            value=3.0,
-            step=0.5,
-            format="%.1f%%"
-        ) / 100
+        moroccan_tickers = get_moroccan_tickers()
         
-        copula_type = st.selectbox(
-            "Copula Dependence Structure",
-            ["Normal (Gaussian)", "Student-t", "Clayton", "Gumbel"],
+        selected_tickers = {}
+        
+        for category, tickers in moroccan_tickers.items():
+            st.markdown(f"**{category}**")
+            cols = st.columns(2)
+            for idx, (name, ticker) in enumerate(tickers.items()):
+                with cols[idx % 2]:
+                    if st.checkbox(name, value=False, key=f"cb_{name}"):
+                        selected_tickers[name] = ticker
+            st.markdown("---")
+        
+        # Custom ticker input
+        st.markdown("#### Add Custom Stock")
+        custom_ticker = st.text_input("Enter Ticker Symbol", placeholder="e.g., AAPL, MSFT, TSLA")
+        custom_name = st.text_input("Display Name", placeholder="e.g., Apple")
+        if custom_ticker and custom_name:
+            if st.button("Add Custom Stock"):
+                selected_tickers[custom_name] = custom_ticker
+                st.rerun()
+        
+        if selected_tickers:
+            st.success(f"{len(selected_tickers)} assets selected")
+        
+        st.markdown("---")
+        
+        # Optimization parameters
+        st.markdown("#### Optimization Parameters")
+        
+        optimization_objective = st.selectbox(
+            "Objective",
+            ["Maximize Sharpe Ratio", "Minimize Variance", "Target Return"],
             index=0
         )
         
+        if optimization_objective == "Target Return":
+            target_return_pct = st.slider(
+                "Target Annual Return (%)",
+                min_value=5.0,
+                max_value=30.0,
+                value=12.0,
+                step=0.5
+            ) / 100
+        else:
+            target_return_pct = 0.12
+        
+        risk_free_rate = st.slider(
+            "Risk-Free Rate (%)",
+            min_value=1.0,
+            max_value=6.0,
+            value=3.0,
+            step=0.5
+        ) / 100
+        
+        st.markdown("---")
+        
+        # Model parameters
+        st.markdown("#### Model Parameters")
+        
+        copula_type = st.selectbox(
+            "Copula Type",
+            ["Normal", "Student-t", "Clayton", "Gumbel"],
+            index=0,
+            help="Different copulas capture different tail dependence patterns"
+        )
+        
+        rebalancing_freq = st.selectbox(
+            "Rebalancing Frequency",
+            ["Daily", "Weekly", "Monthly", "Quarterly"],
+            index=2
+        )
+        
         horizon_days = st.slider(
-            "Investment Horizon (Trading Days)",
+            "Horizon (Days)",
             min_value=63,
             max_value=504,
             value=252,
             step=63
         )
         
-        n_simulations = st.slider(
-            "Monte Carlo Simulations",
-            min_value=500,
-            max_value=5000,
-            value=2000,
-            step=500
-        )
-        
-        st.markdown("---")
-        st.markdown("""
-        <div style="font-size: 12px; color: #6B7280;">
-            <strong>Model Specifications</strong><br><br>
-            • GARCH(1,1) conditional variance<br>
-            • Copula dependence estimation<br>
-            • Mean-Variance optimization<br>
-            • Multi-period rebalancing<br>
-            • Monte Carlo VaR/CVaR
-        </div>
-        """, unsafe_allow_html=True)
+        run_optimization = st.button("Run Optimization", use_container_width=True)
     
-    # Problem Statement Section
-    st.markdown("### Problem Statement")
+    # ==================== MAIN CONTENT ====================
+    if not selected_tickers:
+        st.info("👈 Please select assets from the sidebar to begin portfolio optimization.")
+        
+        # Show available tickers
+        st.markdown("### Available Moroccan Assets")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("**Indices**")
+            st.code("MASI\nMADEX")
+            st.markdown("**Banks**")
+            st.code("ATW (Attijariwafa Bank)\nBCP (Banque Populaire)\nBMCE\nCDM")
+        
+        with col2:
+            st.markdown("**Large Caps**")
+            st.code("IAM (Maroc Telecom)\nOCP (Phosphates)\nAGM (Agma)\nWAA (Wafa Assurance)")
+        
+        with col3:
+            st.markdown("**International**")
+            st.code("^GSPC (S&P 500)\n^STOXX50E (EuroStoxx)\nGC=F (Gold)\nCL=F (Oil)")
+        
+        return
+    
+    if not run_optimization:
+        st.info("Click 'Run Optimization' in the sidebar to compute the optimal portfolio.")
+        
+        # Show selected assets
+        st.markdown("### Selected Assets")
+        selected_df = pd.DataFrame(list(selected_tickers.items()), columns=["Asset", "Ticker"])
+        st.dataframe(selected_df, use_container_width=True, hide_index=True)
+        
+        return
+    
+    # ==================== LOAD AND PROCESS DATA ====================
+    with st.spinner("Loading market data..."):
+        prices_data = {}
+        for name, ticker in selected_tickers.items():
+            data = load_stock_data(ticker, period="2y")
+            if data is not None:
+                prices_data[name] = data
+        
+        if len(prices_data) < 2:
+            st.error("Need at least 2 assets with valid data. Please select different assets.")
+            return
+        
+        prices = pd.DataFrame(prices_data)
+        prices = prices.dropna()
+        returns = prices.pct_change().dropna()
+        
+        if len(returns) < 50:
+            st.error("Insufficient data for selected assets. Please try different tickers.")
+            return
+    
+    # ==================== DISPLAY RESULTS ====================
+    st.markdown("## Optimization Results")
     st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
+    # Calculate annualized metrics
+    annualized_returns = returns.mean() * 252
+    annualized_cov = returns.cov() * 252
+    
+    # Run optimization based on objective
+    if optimization_objective == "Maximize Sharpe Ratio":
+        optimal_weights = optimize_max_sharpe(annualized_returns, annualized_cov, risk_free_rate)
+        objective_name = "Maximum Sharpe Ratio"
+    elif optimization_objective == "Minimize Variance":
+        optimal_weights = optimize_min_variance(annualized_returns, annualized_cov)
+        objective_name = "Minimum Variance"
+    else:
+        optimal_weights, _ = optimize_target_return(annualized_returns, annualized_cov, target_return_pct)
+        objective_name = f"Target Return ({target_return_pct*100:.1f}%)"
+    
+    # Portfolio metrics
+    port_return, port_variance, port_vol = portfolio_statistics(optimal_weights, annualized_returns, annualized_cov)
+    sharpe_ratio = (port_return - risk_free_rate) / port_vol if port_vol > 0 else 0
+    
+    # Display metrics in cards
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.markdown("""
-        <div class="card">
-            <div class="card-title">Limitation 01</div>
-            <div style="font-weight: 600; margin-bottom: 12px;">Markowitz Normality Assumption</div>
-            <div style="font-size: 14px; color: #9CA3AF;">Standard MV optimization assumes normally distributed returns, ignoring fat tails and asymmetry prevalent in Moroccan equities.</div>
+        st.markdown(f"""
+        <div class="metric-highlight">
+            <div class="metric-label">Expected Return</div>
+            <div class="metric-value">{port_return*100:.2f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("""
-        <div class="card">
-            <div class="card-title">Limitation 02</div>
-            <div style="font-weight: 600; margin-bottom: 12px;">Static Dependence</div>
-            <div style="font-size: 14px; color: #9CA3AF;">Pearson correlation fails to capture tail dependence during market stress, particularly relevant for OCP and banking sector co-movements.</div>
+        st.markdown(f"""
+        <div class="metric-highlight">
+            <div class="metric-label">Expected Volatility</div>
+            <div class="metric-value">{port_vol*100:.2f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown("""
-        <div class="card">
-            <div class="card-title">Limitation 03</div>
-            <div style="font-weight: 600; margin-bottom: 12px;">Volatility Clustering Ignored</div>
-            <div style="font-size: 14px; color: #9CA3AF;">Standard models assume homoskedasticity, while Moroccan market exhibits significant GARCH effects and volatility persistence.</div>
+        st.markdown(f"""
+        <div class="metric-highlight">
+            <div class="metric-label">Sharpe Ratio</div>
+            <div class="metric-value">{sharpe_ratio:.3f}</div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Descriptive Statistics
-    st.markdown("### Moroccan Market Statistics")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
+    with col4:
+        st.markdown(f"""
+        <div class="metric-highlight">
+            <div class="metric-label">Objective</div>
+            <div class="metric-value" style="font-size: 16px;">{objective_name}</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    stats_df = compute_descriptive_stats(returns)
-    st.dataframe(stats_df.round(4), use_container_width=True)
+    # ==================== WEIGHTS TABLE ====================
+    st.markdown("### Portfolio Allocation")
     
-    st.caption("ARCH-LM test values > 3.84 indicate significant GARCH effects. Excess kurtosis (>3) confirms fat-tailed distributions requiring copula modeling.")
+    weights_df = pd.DataFrame({
+        "Asset": list(selected_tickers.keys()),
+        "Weight (%)": optimal_weights * 100,
+        "Annual Return (%)": annualized_returns.values * 100,
+        "Annual Volatility (%)": np.sqrt(np.diag(annualized_cov)) * 100
+    }).sort_values("Weight (%)", ascending=False).round(2)
     
-    # GARCH Volatility Display
-    with st.spinner("Estimating GARCH volatility..."):
-        ewma_vol = simulate_garch_volatility(returns, horizon_days)
+    col1, col2 = st.columns([1, 1.5])
     
-    st.markdown("### GARCH(1,1) Volatility Estimates")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
+    with col1:
+        st.dataframe(weights_df, use_container_width=True, hide_index=True)
+    
+    with col2:
+        # Pie chart
+        non_zero_weights = weights_df[weights_df["Weight (%)"] > 0.1]
+        fig_pie = go.Figure(data=[go.Pie(
+            labels=non_zero_weights["Asset"],
+            values=non_zero_weights["Weight (%)"],
+            hole=0.4,
+            marker=dict(colors=px.colors.qualitative.Set3)
+        )])
+        fig_pie.update_layout(
+            template='plotly_dark',
+            plot_bgcolor='#14161C',
+            paper_bgcolor='#14161C',
+            title="Optimal Portfolio Composition",
+            title_font_color="#9CA3AF",
+            height=400
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+    
+    # ==================== EFFICIENT FRONTIER ====================
+    st.markdown("### Efficient Frontier")
+    
+    frontier_returns, frontier_vols, frontier_weights = efficient_frontier_points(annualized_returns, annualized_cov, n_points=40)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=frontier_vols * 100,
+        y=frontier_returns * 100,
+        mode='lines',
+        name='Efficient Frontier',
+        line=dict(color='#00A86B', width=2.5)
+    ))
+    
+    # Individual assets
+    for i, asset in enumerate(returns.columns):
+        fig.add_trace(go.Scatter(
+            x=[np.sqrt(annualized_cov.iloc[i, i]) * 100],
+            y=[annualized_returns.iloc[i] * 100],
+            mode='markers',
+            name=asset,
+            marker=dict(size=12, color='#F18F01', line=dict(width=1, color='#FFFFFF'))
+        ))
+    
+    # Optimal portfolio
+    fig.add_trace(go.Scatter(
+        x=[port_vol * 100],
+        y=[port_return * 100],
+        mode='markers',
+        name='Optimal Portfolio',
+        marker=dict(size=16, color='#00A86B', line=dict(width=2, color='#FFFFFF'), symbol='star')
+    ))
+    
+    fig.update_layout(
+        template='plotly_dark',
+        plot_bgcolor='#14161C',
+        paper_bgcolor='#14161C',
+        xaxis_title='Annual Volatility (%)',
+        yaxis_title='Annual Expected Return (%)',
+        legend=dict(font=dict(color='#9CA3AF'), bgcolor='rgba(0,0,0,0)'),
+        hovermode='closest',
+        xaxis=dict(gridcolor='#2A2D35', zerolinecolor='#2A2D35'),
+        yaxis=dict(gridcolor='#2A2D35', zerolinecolor='#2A2D35'),
+        height=500
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # ==================== DESCRIPTIVE STATISTICS ====================
+    st.markdown("### Asset Statistics")
+    
+    stats_df = compute_statistics(returns)
+    st.dataframe(stats_df, use_container_width=True)
+    
+    st.caption("ARCH-LM test > 3.84 indicates significant GARCH effects. Excess kurtosis (>3) confirms fat-tailed distributions.")
+    
+    # ==================== GARCH VOLATILITY ====================
+    st.markdown("### GARCH(1,1) Conditional Volatility")
+    
+    garch_vol = compute_garch_volatility(returns)
     
     fig_vol = go.Figure()
     for col in returns.columns:
         fig_vol.add_trace(go.Scatter(
-            x=ewma_vol.index,
-            y=ewma_vol[col] * 100,
+            x=garch_vol.index,
+            y=garch_vol[col] * 100,
             mode='lines',
             name=col,
             line=dict(width=1.5)
@@ -549,327 +675,74 @@ def main():
     
     st.plotly_chart(fig_vol, use_container_width=True)
     
-    # Estimate Copula
-    with st.spinner("Estimating copula dependence structure..."):
-        copula_params, uniform_margins, correlation_matrix = estimate_copula_params(returns)
+    # ==================== COPULA PARAMETERS ====================
+    st.markdown("### Copula Dependence Parameters")
     
-    # Copula Selection Section
-    st.markdown("### Copula Selection & Fit")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
+    copula_params = estimate_copula_params(returns)
+    copula_df = pd.DataFrame(copula_params).T
+    st.dataframe(copula_df, use_container_width=True)
     
-    col1, col2, col3, col4 = st.columns(4)
+    st.caption(f"""
+    Copula type selected: {copula_type}
+    - Normal: No tail dependence, symmetric
+    - Student-t: Upper and lower tail dependence
+    - Clayton: Lower tail dependence only (captures bear market co-movement)
+    - Gumbel: Upper tail dependence only (captures bull market co-movement)
+    """)
     
-    copula_cards = {
-        "Normal (Gaussian)": {"tail": "No tail dependence", "symmetry": "Symmetric", "best": "General dependence", "color": "#2E86AB"},
-        "Student-t": {"tail": "Upper & Lower tail", "symmetry": "Symmetric", "best": "Extreme events", "color": "#A23B72"},
-        "Clayton": {"tail": "Lower tail only", "symmetry": "Asymmetric", "best": "Bear markets", "color": "#F18F01"},
-        "Gumbel": {"tail": "Upper tail only", "symmetry": "Asymmetric", "best": "Bull markets", "color": "#00A86B"}
-    }
+    # ==================== CORRELATION MATRIX ====================
+    st.markdown("### Correlation Matrix")
     
-    for idx, (name, props) in enumerate(copula_cards.items()):
-        with [col1, col2, col3, col4][idx]:
-            st.markdown(f"""
-            <div class="card" style="border-top: 3px solid {props['color']}; padding: 16px;">
-                <div class="card-title">{name.upper()}</div>
-                <div style="font-size: 12px; margin-bottom: 8px;">
-                    <span style="color: #6B7280;">Tail:</span> {props['tail']}<br>
-                    <span style="color: #6B7280;">Type:</span> {props['symmetry']}<br>
-                    <span style="color: #6B7280;">Best for:</span> {props['best']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class="card" style="margin-top: 12px;">
-        <div class="card-title">BVC Isolation Hypothesis</div>
-        <div style="font-size: 14px; color: #D1D5DB;">
-        Moroccan banking stocks (ATW, IAM) exhibit asymmetric dependence with commodity-sensitive OCP. 
-        Clayton copula captures lower-tail concentration during bear markets, while Gumbel captures upper-tail 
-        co-movement during expansionary phases.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Portfolio Optimization
-    st.markdown("### Optimal Portfolio Allocation")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-    
-    annualized_returns = returns.mean() * 252
-    annualized_cov = returns.cov() * 252
-    
-    optimal_weights = optimize_portfolio(annualized_returns, annualized_cov, risk_free_rate)
-    
-    col1, col2 = st.columns([1.5, 1])
-    
-    with col1:
-        weights_df = pd.DataFrame({
-            "Asset": returns.columns,
-            "Optimal Weight (%)": optimal_weights * 100,
-            "Annual Return (%)": annualized_returns.values * 100,
-            "Annual Volatility (%)": np.sqrt(np.diag(annualized_cov)) * 100
-        }).round(2)
-        
-        st.dataframe(weights_df, use_container_width=True, hide_index=True)
-    
-    with col2:
-        port_return, port_variance, port_vol = portfolio_statistics(optimal_weights, annualized_returns, annualized_cov)
-        sharpe_ratio = (port_return - risk_free_rate) / port_vol if port_vol > 0 else 0
-        
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-title">PORTFOLIO METRICS</div>
-            <div class="stat-grid" style="grid-template-columns: 1fr;">
-                <div class="stat-item">
-                    <div class="stat-label">Expected Annual Return</div>
-                    <div class="stat-number">{port_return*100:.2f}%</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Expected Annual Volatility</div>
-                    <div class="stat-number">{port_vol*100:.2f}%</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Sharpe Ratio</div>
-                    <div class="stat-number">{sharpe_ratio:.3f}</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Target Return Portfolio
-    st.markdown("### Target Return Allocation")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-    
-    target_weights, target_variance = portfolio_for_target_return(annualized_returns, annualized_cov, target_return)
-    target_vol = np.sqrt(target_variance) if target_variance != np.inf else 0
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown(f"""
-        <div class="stat-item">
-            <div class="stat-label">Target Return</div>
-            <div class="stat-number">{target_return*100:.1f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown(f"""
-        <div class="stat-item">
-            <div class="stat-label">Minimum Volatility</div>
-            <div class="stat-number">{target_vol*100:.2f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        risk_return_ratio = target_return / target_vol if target_vol > 0 else 0
-        st.markdown(f"""
-        <div class="stat-item">
-            <div class="stat-label">Risk-Return Ratio</div>
-            <div class="stat-number">{risk_return_ratio:.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    if target_variance != np.inf:
-        target_weights_df = pd.DataFrame({
-            "Asset": returns.columns,
-            "Weight (%)": target_weights * 100
-        }).round(2)
-        st.dataframe(target_weights_df, use_container_width=True, hide_index=True)
-    
-    # Efficient Frontier
-    st.markdown("### Efficient Frontier")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-    
-    frontier_returns, frontier_vols = efficient_frontier_points(annualized_returns, annualized_cov, n_points=40)
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=frontier_vols * 100,
-        y=frontier_returns * 100,
-        mode='lines',
-        name='Efficient Frontier',
-        line=dict(color='#00A86B', width=2.5)
+    fig_corr = go.Figure(data=go.Heatmap(
+        z=returns.corr().values,
+        x=returns.columns.tolist(),
+        y=returns.columns.tolist(),
+        colorscale='RdYlGn',
+        zmid=0,
+        text=returns.corr().round(3).values,
+        texttemplate='%{text}',
+        textfont={"size": 10}
     ))
     
-    for i, asset in enumerate(returns.columns):
-        fig.add_trace(go.Scatter(
-            x=[np.sqrt(annualized_cov.iloc[i, i]) * 100],
-            y=[annualized_returns.iloc[i] * 100],
-            mode='markers',
-            name=asset,
-            marker=dict(size=12, color='#F18F01', line=dict(width=1, color='#FFFFFF'))
+    fig_corr.update_layout(
+        template='plotly_dark',
+        plot_bgcolor='#14161C',
+        paper_bgcolor='#14161C',
+        title="Asset Return Correlations",
+        height=500
+    )
+    
+    st.plotly_chart(fig_corr, use_container_width=True)
+    
+    # ==================== CUMULATIVE RETURNS ====================
+    st.markdown("### Historical Performance")
+    
+    fig_cum = go.Figure()
+    
+    cumulative_returns = (1 + returns).cumprod()
+    for col in cumulative_returns.columns:
+        fig_cum.add_trace(go.Scatter(
+            x=cumulative_returns.index,
+            y=cumulative_returns[col],
+            mode='lines',
+            name=col,
+            line=dict(width=1.5)
         ))
     
-    fig.add_trace(go.Scatter(
-        x=[port_vol * 100],
-        y=[port_return * 100],
-        mode='markers',
-        name='Optimal Portfolio',
-        marker=dict(size=16, color='#00A86B', line=dict(width=2, color='#FFFFFF'), symbol='star')
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=[target_vol * 100],
-        y=[target_return * 100],
-        mode='markers',
-        name=f'Target Portfolio (c = {target_return*100:.1f}%)',
-        marker=dict(size=14, color='#A23B72', line=dict(width=2, color='#FFFFFF'), symbol='diamond')
-    ))
-    
-    fig.update_layout(
+    fig_cum.update_layout(
         template='plotly_dark',
         plot_bgcolor='#14161C',
         paper_bgcolor='#14161C',
-        xaxis_title='Annual Volatility (%)',
-        yaxis_title='Annual Expected Return (%)',
-        legend=dict(font=dict(color='#9CA3AF'), bgcolor='rgba(0,0,0,0)'),
-        hovermode='closest',
-        xaxis=dict(gridcolor='#2A2D35', zerolinecolor='#2A2D35'),
-        yaxis=dict(gridcolor='#2A2D35', zerolinecolor='#2A2D35')
+        xaxis_title='Date',
+        yaxis_title='Cumulative Return (Base = 1)',
+        legend=dict(font=dict(color='#9CA3AF')),
+        height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_cum, use_container_width=True)
     
-    st.caption("Points above the efficient frontier are unattainable given current assets. Points below are suboptimal.")
-    
-    # Monte Carlo Simulation
-    st.markdown("### Risk Analysis")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-    
-    with st.spinner(f"Running {n_simulations} Monte Carlo simulations..."):
-        simulated_values, simulated_returns = simulate_portfolio_paths(
-            returns, optimal_weights, n_simulations, horizon_days
-        )
-    
-    var_95, cvar_95 = calculate_var_cvar(simulated_returns, confidence=0.95)
-    var_99, cvar_99 = calculate_var_cvar(simulated_returns, confidence=0.99)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown(f"""
-        <div class="metric-highlight">
-            <div class="metric-label">Mean Terminal Value</div>
-            <div class="metric-value">{np.mean(simulated_values):.2f}</div>
-            <div class="metric-label" style="font-size: 10px;">per unit invested</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-title">Value at Risk (95%)</div>
-            <div class="card-value" style="color: #EF4444;">{var_95*100:.2f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-title">Conditional VaR (95%)</div>
-            <div class="card-value" style="color: #EF4444;">{cvar_95*100:.2f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        win_prob = np.mean(simulated_returns > 0) * 100
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-title">Win Probability</div>
-            <div class="card-value">{win_prob:.1f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Simulation histogram
-    fig_hist = go.Figure()
-    
-    fig_hist.add_trace(go.Histogram(
-        x=simulated_values,
-        nbinsx=50,
-        name='Portfolio Values',
-        marker=dict(color='#00A86B', opacity=0.7),
-        hovertemplate='Value: %{x:.2f}<br>Frequency: %{y}<extra></extra>'
-    ))
-    
-    fig_hist.add_vline(x=1.0, line_dash="dash", line_color="#EF4444", annotation_text="Initial Investment")
-    fig_hist.add_vline(x=np.mean(simulated_values), line_dash="solid", line_color="#00A86B", annotation_text="Mean")
-    
-    fig_hist.update_layout(
-        template='plotly_dark',
-        plot_bgcolor='#14161C',
-        paper_bgcolor='#14161C',
-        xaxis_title='Terminal Portfolio Value (per unit invested)',
-        yaxis_title='Frequency',
-        bargap=0.05
-    )
-    
-    st.plotly_chart(fig_hist, use_container_width=True)
-    
-    # Copula Parameters Display
-    with st.expander("Copula Dependence Parameters"):
-        copula_params_list = []
-        for pair, params in copula_params.items():
-            copula_params_list.append({
-                "Asset Pair": pair,
-                "Kendall's Tau": round(params["Kendall Tau"], 4),
-                "Normal Rho": round(params["Normal Rho"], 4),
-                "Clayton Theta": round(params["Clayton Theta"], 4),
-                "Gumbel Theta": round(params["Gumbel Theta"], 4)
-            })
-        
-        if copula_params_list:
-            copula_params_df = pd.DataFrame(copula_params_list)
-            st.dataframe(copula_params_df, use_container_width=True)
-    
-    # Moroccan Specific Insights
-    st.markdown("### Moroccan Market Insights")
-    st.markdown('<div class="accent-horizontal"></div>', unsafe_allow_html=True)
-    
-    insights = [
-        ("Rebalancing Frequency", "Monthly rebalancing is optimal for the Moroccan market given liquidity constraints and transaction costs."),
-        ("Rolling Windows", "A 36-month estimation window captures regime changes while maintaining sufficient degrees of freedom."),
-        ("Clayton for BVC", "Lower-tail dependence during market stress is best captured by the Clayton copula."),
-        ("OCP Volatility", "OCP exhibits the strongest GARCH effects with persistence near 0.97."),
-        ("Banking Sector", "ATW and IAM show persistent volatility clustering with asymmetric responses."),
-        ("BVC Isolation", "Partial decoupling from emerging markets supports Moroccan diversification benefits.")
-    ]
-    
-    cols = st.columns(3)
-    for idx, (title, content) in enumerate(insights):
-        with cols[idx % 3]:
-            st.markdown(f"""
-            <div class="card" style="min-height: 160px;">
-                <div class="card-title">{title.upper()}</div>
-                <div style="font-size: 13px; color: #D1D5DB; line-height: 1.5;">{content}</div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Extensions
-    with st.expander("Extensions & Future Research Directions"):
-        st.markdown("""
-        <div style="padding: 8px 0;">
-            <div style="margin-bottom: 16px;">
-                <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">CVaR Optimization</span>
-                <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Replace variance with Conditional Value-at-Risk for better tail risk management</span>
-            </div>
-            <div style="margin-bottom: 16px;">
-                <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">Transaction Costs</span>
-                <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Incorporate proportional and market impact costs into rebalancing decisions</span>
-            </div>
-            <div style="margin-bottom: 16px;">
-                <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">Dynamic Copulas</span>
-                <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Allow dependence structure to vary with market regimes and cycles</span>
-            </div>
-            <div style="margin-bottom: 16px;">
-                <span class="badge-success" style="padding: 4px 8px; border-radius: 6px; font-size: 11px;">ESG Integration</span>
-                <span style="margin-left: 12px; font-size: 13px; color: #D1D5DB;">Add ESG score constraints for socially responsible investment portfolios</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Implementation Details
-    with st.expander("Implementation & Methodology Reference"):
+    # ==================== METHODOLOGY REFERENCE ====================
+    with st.expander("Methodology Reference"):
         st.markdown("""
         **Primary Reference**  
         Prince, A. (2007). *Probleme d'optimisation de portefeuille en temps discret avec une modelisation Garch*. HEC Montreal.
@@ -881,25 +754,17 @@ h_t = beta_0 + beta_1 * epsilon^2_{t-1} + beta_2 * h_{t-1}
 Copula Function:
 C(u_1,...,u_d) = F(F_1^{-1}(u_1),...,F_d^{-1}(u_d))
 
-Efficient Frontier:
+Mean-Variance Optimization:
 min w^T Sigma w subject to w^T mu = c, sum w_i = 1
 
-**Software Stack**
-
-| Component | Library | Purpose |
-|-----------|---------|---------|
-| Interface | Streamlit | Interactive dashboard framework |
-| Optimization | SciPy | Portfolio optimization algorithms |
-| Statistics | NumPy, Pandas | Numerical computing and data manipulation |
-| Visualization | Plotly | Interactive charts and graphs |
-| Data | yfinance | Market data acquisition |
-
+Sharpe Ratio Maximization:
+max (w^T mu - r_f) / sqrt(w^T Sigma w)
 **Model Assumptions**
 
 1. No transaction costs or market frictions
 2. Constant risk-free rate over investment horizon
-3. Short selling not permitted (weights bounded between 0 and 1)
-4. Investor cannot influence market prices through trading activity
+3. Long-only portfolio (weights between 0 and 1)
+4. Historical returns are representative of future distributions
 """)
 
     # Footer
