@@ -492,16 +492,15 @@ COPULA_INFO = {
 }
 
 SECTOR_COLORS = {
-    "Banking":    PALETTE["teal"],
-    "Telecoms":   PALETTE["gold"],
-    "Phosphates": PALETTE["rust"],
-    "Mining":     "#4a6a5a",
-    "Energy":     "#5a6a4a",
-    "Banking":    PALETTE["teal"],
-    "Retail":     "#6a5a7a",
-    "Insurance":  "#5a6a7a",
-    "Consumer":   "#7a6a5a",
-    "Real Estate":PALETTE["ink3"],
+    "Banking":     PALETTE["teal"],
+    "Telecoms":    PALETTE["gold"],
+    "Phosphates":  PALETTE["rust"],
+    "Mining":      "#4a6a5a",
+    "Energy":      "#5a6a4a",
+    "Retail":      "#6a5a7a",
+    "Insurance":   "#5a6a7a",
+    "Consumer":    "#7a6a5a",
+    "Real Estate": PALETTE["ink3"],
 }
 
 PLOTLY_BASE = dict(
@@ -511,8 +510,10 @@ PLOTLY_BASE = dict(
     title_font_family="Cormorant Garamond",
     title_font_color=PALETTE["ink"],
     title_font_size=16,
-    margin=dict(l=20, r=20, t=48, b=20),
 )
+
+MARGIN_DEFAULT = dict(l=20, r=20, t=48, b=20)
+MARGIN_BAR     = dict(l=200, r=60, t=50, b=30)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -858,14 +859,15 @@ def fig_weights_bar(weights: dict, title: str = "Optimal Portfolio Weights") -> 
         textposition="outside",
         textfont=dict(family="DM Mono", size=11, color=PALETTE["ink"]),
     ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title=title,
         xaxis=dict(title="Weight (%)", gridcolor=PALETTE["bg3"], showline=False, tickfont=dict(family="DM Mono", size=10)),
         yaxis=dict(tickfont=dict(family="DM Mono", size=10)),
         height=max(300, 55 * len(syms)),
-        margin=dict(l=200, r=60, t=50, b=30),
-    )
+        margin=MARGIN_BAR,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -883,8 +885,8 @@ def fig_dynamic_weights(dynamic_w: np.ndarray, tickers: list, T: int) -> go.Figu
             name=sym,
             line=dict(color=color_palette[n % len(color_palette)], width=1.8),
         ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="Dynamic Weight Evolution Over Investment Horizon",
         xaxis=dict(title="Month", gridcolor=PALETTE["bg3"], dtick=1,
                    tickfont=dict(family="DM Mono", size=10)),
@@ -893,7 +895,9 @@ def fig_dynamic_weights(dynamic_w: np.ndarray, tickers: list, T: int) -> go.Figu
         height=340,
         legend=dict(font=dict(family="DM Mono", size=10), orientation="h",
                     yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -909,8 +913,8 @@ def fig_tau_series(tau_list: list, T: int) -> go.Figure:
         fillcolor=f"rgba(201,168,76,0.08)",
         name="τ_t",
     ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="Information Ratio Scalars τ_t — LSM Backward Induction",
         xaxis=dict(title="Time step t", gridcolor=PALETTE["bg3"],
                    tickfont=dict(family="DM Mono", size=10)),
@@ -918,7 +922,9 @@ def fig_tau_series(tau_list: list, T: int) -> go.Figure:
                    gridcolor=PALETTE["bg3"],
                    tickfont=dict(family="DM Mono", size=10)),
         height=300,
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -951,8 +957,8 @@ def fig_efficient_frontier(result: dict, target_return: float, rf: float) -> go.
             marker=dict(size=8, color=PALETTE["rust"], symbol="circle"),
             name=f"Achieved ({achieved:.1f}%)",
         ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="Efficient Frontier — Moroccan Market",
         xaxis=dict(title="Volatility σ (%)", gridcolor=PALETTE["bg3"],
                    tickfont=dict(family="DM Mono", size=10)),
@@ -960,7 +966,9 @@ def fig_efficient_frontier(result: dict, target_return: float, rf: float) -> go.
                    tickfont=dict(family="DM Mono", size=10)),
         height=320,
         legend=dict(font=dict(family="DM Mono", size=10)),
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -979,12 +987,14 @@ def fig_sector_donut(weights: dict) -> go.Figure:
         marker_line_width=0,
         textfont=dict(family="DM Mono", size=10),
     ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="Sector Allocation",
         height=300,
         legend=dict(font=dict(family="DM Mono", size=10)),
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -1003,8 +1013,8 @@ def fig_ngarch_variance(tickers: list, ngarch_models: dict, T: int) -> go.Figure
             name=sym,
             line=dict(color=color_palette[n % len(color_palette)], width=1.8),
         ))
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="NGarch Variance Forecast (Annualised) — by Asset",
         xaxis=dict(title="Month", gridcolor=PALETTE["bg3"],
                    tickfont=dict(family="DM Mono", size=10)),
@@ -1013,7 +1023,9 @@ def fig_ngarch_variance(tickers: list, ngarch_models: dict, T: int) -> go.Figure
         height=300,
         legend=dict(font=dict(family="DM Mono", size=10), orientation="h",
                     yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     return fig
 
 
@@ -1035,12 +1047,14 @@ def fig_copula_comparison(comp_results: dict) -> go.Figure:
                    marker_line_width=0),
             row=1, col=col,
         )
-    fig.update_layout(
-        **PLOTLY_BASE,
+    layout = dict(**PLOTLY_BASE)
+    layout.update(dict(
         title="Copula Model Comparison — Moroccan Market",
         height=320,
         font=dict(family="DM Mono", size=10),
-    )
+            margin=MARGIN_DEFAULT,
+    ))
+    fig.update_layout(**layout)
     fig.update_annotations(font=dict(family="DM Mono", size=11))
     return fig
 
@@ -1834,4 +1848,3 @@ with tab_about:
     Risk-free rate benchmarked against Bank Al-Maghrib Bons du Trésor.
     </div>
     """, unsafe_allow_html=True)
-
